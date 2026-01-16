@@ -48,6 +48,15 @@
             animation: spin 1s linear infinite;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* 簡單的淡入動畫 */
+        .scale-up-center {
+            animation: scale-up-center 0.2s cubic-bezier(0.390, 0.575, 0.565, 1.000) both;
+        }
+        @keyframes scale-up-center {
+            0% { transform: scale(0.5); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
     </style>
 </head>
 <body>
@@ -69,13 +78,13 @@
         if (!firebase.apps.length) {
             try {
                 firebase.initializeApp(firebaseConfig);
-                // 啟用 Analytics (雖然在單頁應用非必要，但既然你有申請就放進來)
                 if (firebase.analytics) {
                     firebase.analytics();
                 }
             } catch (e) {
                 console.error("Firebase 初始化失敗", e);
-                alert("Firebase 初始化失敗，請檢查網路連線或 Console 錯誤訊息。");
+                // alert 改用 console 提示，避免 block
+                console.warn("Firebase 初始化失敗，請檢查網路連線或 Console 錯誤訊息。");
             }
         }
         // 取得 Firestore 資料庫實例
@@ -148,6 +157,8 @@
             const [newMemberName, setNewMemberName] = useState('');
             const [loadingRates, setLoadingRates] = useState(false);
             const [showClearConfirm, setShowClearConfirm] = useState(false);
+            const [deleteTargetId, setDeleteTargetId] = useState(null); // 刪除確認用 ID
+            const [showLogoutConfirm, setShowLogoutConfirm] = useState(false); // 新增：登出確認用
             const [toast, setToast] = useState(null);
             const [form, setForm] = useState({ item: '', amount: '', currency: 'TWD', payer: '', participants: [] });
 
@@ -192,12 +203,15 @@
             // --- 功能函數 ---
 
             const handleLogout = () => {
-                if(confirm("確定要登出此旅遊群組嗎？(資料不會消失)")) {
-                    localStorage.removeItem('my_trip_id');
-                    setTripId(null);
-                    setMembers([]);
-                    setExpenses([]);
-                }
+                setShowLogoutConfirm(true); // 改為呼叫自定義視窗
+            };
+
+            const confirmLogout = () => {
+                localStorage.removeItem('my_trip_id');
+                setTripId(null);
+                setMembers([]);
+                setExpenses([]);
+                setShowLogoutConfirm(false);
             };
 
             const showToast = (msg) => {
@@ -238,7 +252,6 @@
                 const trimmed = newMemberName.trim();
                 if (!trimmed || members.includes(trimmed)) return;
                 const newMembers = [...members, trimmed];
-                // 本地先更新 UI 比較順，實際上會等 Firebase 回調確認
                 setMembers(newMembers); 
                 updateMembersInCloud(newMembers);
                 setNewMemberName('');
@@ -285,9 +298,13 @@
                 showToast("支出已儲存至雲端");
             };
 
-            const deleteExpense = (id) => {
-                const newExpenses = expenses.filter(e => e.id !== id);
-                updateExpensesInCloud(newExpenses);
+            const confirmDeleteExpense = () => {
+                if (deleteTargetId) {
+                    const newExpenses = expenses.filter(e => e.id !== deleteTargetId);
+                    updateExpensesInCloud(newExpenses);
+                    setDeleteTargetId(null);
+                    showToast("已刪除該筆支出");
+                }
             };
 
             const clearAllData = () => {
@@ -309,7 +326,7 @@
 
             const formatNum = (num) => new Intl.NumberFormat('en-US').format(Math.round(num));
 
-            // --- 結算邏輯 (保持不變) ---
+            // --- 結算邏輯 ---
             const settlement = useMemo(() => {
                 const balances = {}; 
                 let totalTWD = 0;
@@ -582,18 +599,23 @@
                                                     <div className="text-base text-[#7a746a] mt-3 font-bold leading-relaxed">
                                                         <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2">
                                                             <span><span className="text-[#5c6b53] font-black">{exp.payer}</span> 預付了</span>
-                                                            <div className="flex items-baseline gap-2">
+                                                            <div className="flex items-baseline gap-2 flex-wrap">
                                                                 <span className="text-[#5c6b53] text-lg sm:text-xl font-black">{CURRENCIES.find(c => c.code === exp.currency)?.symbol} {formatNum(exp.amount)}</span>
                                                                 {exp.currency !== 'TWD' && (
-                                                                    <span className="text-xs text-[#5c6b53]/80 font-bold bg-[#5c6b53]/10 px-2 py-0.5 rounded-md whitespace-nowrap">
-                                                                        ≈ TWD {formatNum(exp.amount * exp.rate)}
-                                                                    </span>
+                                                                    <div className="flex flex-col gap-1 mt-1 sm:mt-0 sm:ml-2">
+                                                                        <span className="text-xs text-[#5c6b53]/80 font-bold bg-[#5c6b53]/10 px-2 py-0.5 rounded-md whitespace-nowrap w-fit">
+                                                                            ≈ TWD {formatNum(exp.amount * exp.rate)}
+                                                                        </span>
+                                                                        <span className="text-[10px] text-[#a8a297] font-medium tracking-wide">
+                                                                            (當時匯率: {exp.rate})
+                                                                        </span>
+                                                                    </div>
                                                                 )}
                                                             </div>
                                                         </div>
                                                     </div>
                                                 </div>
-                                                <button onClick={() => deleteExpense(exp.id)} className="text-[#e5e1d8] hover:text-red-500 transition-colors p-1"><Icon name="trash" className="w-5 h-5" /></button>
+                                                <button onClick={() => setDeleteTargetId(exp.id)} className="text-[#e5e1d8] hover:text-red-500 transition-colors p-1"><Icon name="trash" className="w-5 h-5" /></button>
                                             </div>
                                             
                                             <div className="grid grid-cols-2 sm:grid-cols-2 gap-3 sm:gap-4 mt-6">
@@ -606,7 +628,7 @@
                                                             </div>
                                                             {exp.currency !== 'TWD' && (
                                                                 <div className="text-[11px] text-[#8d775f] font-black mt-1.5 opacity-90 pt-1.5 border-t border-[#e5e1d8]/60 block">
-                                                                    ≈ TWD {formatNum(amt * exp.rate)}
+                                                                        ≈ TWD {formatNum(amt * exp.rate)}
                                                                 </div>
                                                             )}
                                                         </div>
@@ -682,7 +704,35 @@
                         </div>
                     )}
 
-                    {/* 清除確認 */}
+                    {/* 單筆刪除確認視窗 */}
+                    {deleteTargetId && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-6">
+                            <div className="bg-white rounded-[3rem] p-8 max-w-sm w-full shadow-2xl border border-[#e5e1d8] text-center scale-up-center">
+                                <h3 className="text-xl font-black text-red-500 mb-4">刪除此筆支出？</h3>
+                                <p className="text-[#7a746a] text-sm mb-8 leading-relaxed font-black">此動作無法復原。</p>
+                                <div className="flex flex-col gap-3">
+                                    <button onClick={confirmDeleteExpense} className="w-full py-4 bg-red-500 text-white text-base font-black rounded-2xl tracking-[0.2em] uppercase shadow-lg active:scale-95 transition-all">確認刪除</button>
+                                    <button onClick={() => setDeleteTargetId(null)} className="w-full py-3 text-[#a8a297] text-sm font-black uppercase hover:text-[#4a4a4a]">取消</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 登出確認視窗 */}
+                    {showLogoutConfirm && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-6">
+                            <div className="bg-white rounded-[3rem] p-8 max-w-sm w-full shadow-2xl border border-[#e5e1d8] text-center scale-up-center">
+                                <h3 className="text-xl font-black text-[#5c6b53] mb-4">確定要登出嗎？</h3>
+                                <p className="text-[#7a746a] text-sm mb-8 leading-relaxed font-black">不用擔心，您的資料仍會保留在雲端，下次輸入代碼即可回來。</p>
+                                <div className="flex flex-col gap-3">
+                                    <button onClick={confirmLogout} className="w-full py-4 bg-[#5c6b53] text-white text-base font-black rounded-2xl tracking-[0.2em] uppercase shadow-lg active:scale-95 transition-all">確認登出</button>
+                                    <button onClick={() => setShowLogoutConfirm(false)} className="w-full py-3 text-[#a8a297] text-sm font-black uppercase hover:text-[#4a4a4a]">取消</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 清除全部確認 */}
                     {showClearConfirm && (
                         <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-6">
                             <div className="bg-white rounded-[3rem] p-12 max-w-sm w-full shadow-2xl border border-[#e5e1d8] text-center scale-up-center">
