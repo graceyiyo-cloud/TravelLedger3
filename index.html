@@ -595,6 +595,11 @@
                                                     <div className="flex items-center gap-3 flex-wrap">
                                                         <span className="text-xl font-black text-[#4a4a4a]">{idx + 1}. {exp.item}</span>
                                                         <span className="text-[10px] text-[#a8a297] tracking-widest bg-[#fdfaf5] px-2 py-0.5 rounded border border-[#e5e1d8]">{exp.timestamp}</span>
+                                                        {exp.currency !== 'TWD' && (
+                                                            <span className="text-[10px] text-[#5c6b53] tracking-widest bg-[#fdfaf5] px-2 py-0.5 rounded border border-[#e5e1d8]">
+                                                                匯率: {exp.rate}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                     <div className="text-base text-[#7a746a] mt-3 font-bold leading-relaxed">
                                                         <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2">
@@ -605,9 +610,6 @@
                                                                     <div className="flex flex-col gap-1 mt-1 sm:mt-0 sm:ml-2">
                                                                         <span className="text-xs text-[#5c6b53]/80 font-bold bg-[#5c6b53]/10 px-2 py-0.5 rounded-md whitespace-nowrap w-fit">
                                                                             ≈ TWD {formatNum(exp.amount * exp.rate)}
-                                                                        </span>
-                                                                        <span className="text-[10px] text-[#a8a297] font-medium tracking-wide">
-                                                                            (當時匯率: {exp.rate})
                                                                         </span>
                                                                     </div>
                                                                 )}
