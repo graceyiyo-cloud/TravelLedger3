@@ -427,7 +427,7 @@
                 
                 if (hasPrepaid) text += `\n`;
 
-                text += `━━━━━━━━━━━━━━━\n\n`;
+                text += `━━━━\n\n`;
 
                 members.forEach(member => {
                     const involved = expenses.filter(e => e.splits[member] !== undefined);
@@ -442,7 +442,7 @@
                         text += `\n`;
                     }
                 });
-                text += `━━━━━━━━━━━━━━━\n【最終收付】(建議以台幣結算)\n`;
+                text += `━━━━\n【最終收付】(建議以台幣結算)\n`;
                 if (settlement.transactions.length === 0) text += `目前的帳目已結清。\n`;
                 else {
                     settlement.transactions.forEach(t => {
@@ -642,8 +642,8 @@
                                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
                                                 {Object.entries(exp.splits).map(([name, amt]) => (
                                                     <div key={name} className="bg-[#fdfaf5] px-3 py-2 rounded-xl border border-[#e5e1d8]/60 text-sm shadow-sm hover:border-[#5c6b53]/30 transition-colors flex items-center justify-between group">
-                                                         {/* Left: Name only */}
-                                                        <div className="text-[#5c6b53] font-black text-sm">
+                                                         {/* Left: Name only - Changed Color */}
+                                                        <div className="text-[#a8a297] font-black text-sm">
                                                             {name}
                                                         </div>
 
