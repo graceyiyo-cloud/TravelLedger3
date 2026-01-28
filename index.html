@@ -534,7 +534,7 @@
                                         <div className="w-1/3">
                                             <label className="text-xs text-[#a8a297] uppercase mb-1 block">幣別</label>
                                             <select value={editTargetExpense.currency} onChange={e => setEditTargetExpense({...editTargetExpense, currency: e.target.value})} className="w-full px-2 py-2 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl text-center">
-                                                {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code}</option>)}
+                                                {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
                                             </select>
                                         </div>
                                         <div className="flex-1">
