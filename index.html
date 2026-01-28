@@ -150,6 +150,7 @@
             const [loadingRates, setLoadingRates] = useState(false);
             const [showClearConfirm, setShowClearConfirm] = useState(false);
             const [deleteTargetId, setDeleteTargetId] = useState(null);
+            const [editTargetExpense, setEditTargetExpense] = useState(null);
             const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
             const [toast, setToast] = useState(null);
             const [form, setForm] = useState({ item: '', amount: '', currency: 'TWD', payer: '', participants: [] });
@@ -211,23 +212,54 @@
                 updateCloud({ members: newList, paymentInfo: newPayments });
             };
 
-            const submitExpense = () => {
-                const { item, amount, currency, payer, participants } = form;
-                if (!item || !amount || !payer || participants.length === 0) return;
+            const calculateSplits = (amount, participants) => {
                 const totalAmount = parseFloat(amount);
                 const count = participants.length;
+                if (count === 0) return {};
                 const baseSplit = Math.round(totalAmount / count);
                 const lastSplit = totalAmount - (baseSplit * (count - 1));
                 const splits = {};
                 participants.forEach((name, index) => { splits[name] = index === count - 1 ? lastSplit : baseSplit; });
+                return splits;
+            };
+
+            const submitExpense = () => {
+                const { item, amount, currency, payer, participants } = form;
+                if (!item || !amount || !payer || participants.length === 0) return;
                 
+                const splits = calculateSplits(amount, participants);
                 const newExpense = {
-                    id: Date.now(), item, amount: totalAmount, currency, rate: parseFloat(rates[currency] || 1),
+                    id: Date.now(), item, amount: parseFloat(amount), currency, rate: parseFloat(rates[currency] || 1),
                     payer, splits, timestamp: new Date().toLocaleString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(/\//g, '/')
                 };
                 updateCloud({ expenses: [...expenses, newExpense] });
                 setForm({ ...form, item: '', amount: '', participants: [] });
                 showToast("支出已儲存");
+            };
+
+            const updateExpense = () => {
+                if (!editTargetExpense) return;
+                const { id, item, amount, currency, payer, participants } = editTargetExpense;
+                if (!item || !amount || !payer || participants.length === 0) return;
+
+                const splits = calculateSplits(amount, participants);
+                const updatedExpenses = expenses.map(exp => {
+                    if (exp.id === id) {
+                        return { 
+                            ...exp, 
+                            item, 
+                            amount: parseFloat(amount), 
+                            currency, 
+                            payer, 
+                            splits, 
+                            rate: parseFloat(rates[currency] || exp.rate) 
+                        };
+                    }
+                    return exp;
+                });
+                updateCloud({ expenses: updatedExpenses });
+                setEditTargetExpense(null);
+                showToast("更新成功");
             };
 
             const settlement = useMemo(() => {
@@ -296,13 +328,12 @@
 
                 text += `━━━━\n【最終收付】(建議以台幣結算)\n`;
                 settlement.transactions.forEach(t => {
-                    // 最終收付顯示外幣與台幣金額
                     const amtStr = settlement.primaryCode === 'TWD' 
                         ? `TWD ${formatNum(t.amount)}` 
                         : `${settlement.primaryCode} ${formatNum(t.amount / settlement.primaryRate)} (TWD ${formatNum(t.amount)})`;
                     
                     text += `◆ ${t.from} → ${t.to}：${amtStr}\n`;
-                    if (paymentInfo[t.to]) text += `   (收款資訊：${paymentInfo[t.to]})\n`;
+                    if (paymentInfo[t.to]) text += `    (收款資訊：${paymentInfo[t.to]})\n`;
                 });
 
                 const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el);
@@ -406,6 +437,7 @@
                                                     </div>
                                                     <div className="flex items-center gap-3 ml-2 flex-shrink-0">
                                                         <div className="text-[10px] text-[#a8a297] font-bold">匯率：{exp.rate}</div>
+                                                        <button onClick={() => setEditTargetExpense({ ...exp, participants: Object.keys(exp.splits) })} className="text-[#e5e1d8] hover:text-[#5c6b53]"><Icon name="edit-3" className="w-5 h-5" /></button>
                                                         <button onClick={() => setDeleteTargetId(exp.id)} className="text-[#e5e1d8] hover:text-red-500"><Icon name="trash-2" className="w-5 h-5" /></button>
                                                     </div>
                                                 </div>
@@ -487,6 +519,49 @@
                             </div>
                         </section>
                     </main>
+
+                    {/* 修改支出 Modal */}
+                    {editTargetExpense && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-6 overflow-y-auto">
+                            <div className="bg-white rounded-[2rem] p-6 max-w-md w-full shadow-2xl scale-up-center my-8">
+                                <h3 className="text-lg font-black text-[#5c6b53] mb-4">修改支出項目</h3>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="text-xs text-[#a8a297] uppercase mb-1 block">項目名稱</label>
+                                        <input type="text" value={editTargetExpense.item} onChange={e => setEditTargetExpense({...editTargetExpense, item: e.target.value})} className="w-full px-4 py-2 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl" />
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <div className="w-1/3">
+                                            <label className="text-xs text-[#a8a297] uppercase mb-1 block">幣別</label>
+                                            <select value={editTargetExpense.currency} onChange={e => setEditTargetExpense({...editTargetExpense, currency: e.target.value})} className="w-full px-2 py-2 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl text-center">
+                                                {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="flex-1">
+                                            <label className="text-xs text-[#a8a297] uppercase mb-1 block">金額</label>
+                                            <input type="text" value={editTargetExpense.amount} onChange={e => /^\d*\.?\d*$/.test(e.target.value) && setEditTargetExpense({...editTargetExpense, amount: e.target.value})} className="w-full px-4 py-2 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl text-right" />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-[#a8a297] uppercase mb-1 block">支付者</label>
+                                        <div className="flex flex-wrap gap-2">
+                                            {members.map(m => <button key={m} onClick={() => setEditTargetExpense({...editTargetExpense, payer: m})} className={`px-3 py-1.5 rounded-lg border text-xs ${editTargetExpense.payer === m ? 'bg-[#5c6b53] text-white' : 'bg-white border-[#e5e1d8]'}`}>{m}</button>)}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-[#a8a297] uppercase mb-1 block">分攤者</label>
+                                        <div className="flex flex-wrap gap-2">
+                                            {members.map(m => <button key={m} onClick={() => setEditTargetExpense(prev => ({...prev, participants: prev.participants.includes(m) ? prev.participants.filter(p => p !== m) : [...prev.participants, m]}))} className={`px-3 py-1.5 rounded-lg border text-xs ${editTargetExpense.participants.includes(m) ? 'bg-[#f3f0e9] border-[#5c6b53] text-[#5c6b53]' : 'bg-white border-[#e5e1d8]'}`}>{m}</button>)}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="flex gap-3 mt-6">
+                                    <button onClick={updateExpense} className="flex-1 py-3 bg-[#5c6b53] text-white rounded-xl">更新並同步</button>
+                                    <button onClick={() => setEditTargetExpense(null)} className="flex-1 py-3 bg-[#f3f0e9] text-[#a8a297] rounded-xl">取消</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {editingPayment && (
                         <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-6">
