@@ -142,18 +142,20 @@
             const [loading, setLoading] = useState(false);
             const [members, setMembers] = useState([]);
             const [paymentInfo, setPaymentInfo] = useState({});
+            const [memberWeights, setMemberWeights] = useState({});
             const [expenses, setExpenses] = useState([]);
             const [rates, setRates] = useState({ TWD: 1 });
             const [newMemberName, setNewMemberName] = useState('');
             const [editingPayment, setEditingPayment] = useState(null);
             const [tempPaymentText, setTempPaymentText] = useState('');
+            const [tempWeight, setTempWeight] = useState(1);
             const [loadingRates, setLoadingRates] = useState(false);
             const [showClearConfirm, setShowClearConfirm] = useState(false);
             const [deleteTargetId, setDeleteTargetId] = useState(null);
             const [editTargetExpense, setEditTargetExpense] = useState(null);
             const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
             const [toast, setToast] = useState(null);
-            const [form, setForm] = useState({ item: '', amount: '', currency: 'TWD', payer: '', participants: [] });
+            const [form, setForm] = useState({ item: '', amount: '', currency: 'TWD', payer: '', participants: [], customWeights: {} });
 
             useEffect(() => {
                 if (!tripId) return;
@@ -165,8 +167,9 @@
                         setMembers(data.members || []);
                         setExpenses(data.expenses || []);
                         setPaymentInfo(data.paymentInfo || {});
+                        setMemberWeights(data.memberWeights || {});
                     } else {
-                        db.collection('trips').doc(tripId).set({ members: [], expenses: [], paymentInfo: {}, createdAt: new Date() });
+                        db.collection('trips').doc(tripId).set({ members: [], expenses: [], paymentInfo: {}, memberWeights: {}, createdAt: new Date() });
                     }
                 });
                 localStorage.setItem('my_trip_id', tripId);
@@ -201,48 +204,59 @@
                 const name = newMemberName.trim();
                 if (!name || members.includes(name)) return;
                 const newList = [...members, name];
-                updateCloud({ members: newList });
+                const newWeights = { ...memberWeights, [name]: 1 };
+                updateCloud({ members: newList, memberWeights: newWeights });
                 setNewMemberName('');
             };
 
             const removeMember = (name) => {
                 const newList = members.filter(m => m !== name);
                 const newPayments = { ...paymentInfo };
+                const newWeights = { ...memberWeights };
                 delete newPayments[name];
-                updateCloud({ members: newList, paymentInfo: newPayments });
+                delete newWeights[name];
+                updateCloud({ members: newList, paymentInfo: newPayments, memberWeights: newWeights });
             };
 
-            const calculateSplits = (amount, participants) => {
+            const calculateSplitsByWeights = (amount, participants, customWeights) => {
                 const totalAmount = parseFloat(amount);
-                const count = participants.length;
-                if (count === 0) return {};
-                const baseSplit = Math.round(totalAmount / count);
-                const lastSplit = totalAmount - (baseSplit * (count - 1));
+                const totalWeight = participants.reduce((sum, name) => sum + parseFloat(customWeights[name] || 0), 0);
+                if (totalWeight === 0) return {};
+
+                let remaining = totalAmount;
                 const splits = {};
-                participants.forEach((name, index) => { splits[name] = index === count - 1 ? lastSplit : baseSplit; });
+                participants.forEach((name, index) => {
+                    if (index === participants.length - 1) {
+                        splits[name] = Math.round(remaining);
+                    } else {
+                        const share = Math.round(totalAmount * (parseFloat(customWeights[name] || 0) / totalWeight));
+                        splits[name] = share;
+                        remaining -= share;
+                    }
+                });
                 return splits;
             };
 
             const submitExpense = () => {
-                const { item, amount, currency, payer, participants } = form;
+                const { item, amount, currency, payer, participants, customWeights } = form;
                 if (!item || !amount || !payer || participants.length === 0) return;
                 
-                const splits = calculateSplits(amount, participants);
+                const splits = calculateSplitsByWeights(amount, participants, customWeights);
                 const newExpense = {
                     id: Date.now(), item, amount: parseFloat(amount), currency, rate: parseFloat(rates[currency] || 1),
-                    payer, splits, timestamp: new Date().toLocaleString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(/\//g, '/')
+                    payer, splits, customWeights, timestamp: new Date().toLocaleString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(/\//g, '/')
                 };
                 updateCloud({ expenses: [...expenses, newExpense] });
-                setForm({ ...form, item: '', amount: '', participants: [] });
+                setForm({ ...form, item: '', amount: '', participants: [], customWeights: {} });
                 showToast("支出已儲存");
             };
 
             const updateExpense = () => {
                 if (!editTargetExpense) return;
-                const { id, item, amount, currency, payer, participants } = editTargetExpense;
+                const { id, item, amount, currency, payer, participants, customWeights } = editTargetExpense;
                 if (!item || !amount || !payer || participants.length === 0) return;
 
-                const splits = calculateSplits(amount, participants);
+                const splits = calculateSplitsByWeights(amount, participants, customWeights);
                 const updatedExpenses = expenses.map(exp => {
                     if (exp.id === id) {
                         return { 
@@ -252,6 +266,7 @@
                             currency, 
                             payer, 
                             splits, 
+                            customWeights,
                             rate: parseFloat(rates[currency] || exp.rate) 
                         };
                     }
@@ -326,7 +341,7 @@
                     text += ` 總計分攤：TWD ${formatNum(memberTotalTWD)}\n\n`;
                 });
 
-                text += `━━━━\n【最終收付】(建議以台幣結算)\n`;
+                text += `━━━━\n【最終收付】\n`;
                 settlement.transactions.forEach(t => {
                     const amtStr = settlement.primaryCode === 'TWD' 
                         ? `TWD ${formatNum(t.amount)}` 
@@ -363,8 +378,8 @@
                             <div className="flex flex-wrap gap-2">
                                 {members.map(m => (
                                     <div key={m} className="bg-[#f3f0e9] text-[#5c6b53] px-3 py-2 rounded-lg flex items-center gap-2 text-sm border border-[#e5e1d8]">
-                                        <span>{m}</span>
-                                        <button onClick={() => { setEditingPayment(m); setTempPaymentText(paymentInfo[m] || ''); }} className={`p-1 rounded ${paymentInfo[m] ? 'text-blue-500' : 'text-[#a8a297]'}`}><Icon name="wallet" className="w-4 h-4" /></button>
+                                        <span>{m} <span className="text-[10px] opacity-60">(比:{memberWeights[m] || 1})</span></span>
+                                        <button onClick={() => { setEditingPayment(m); setTempPaymentText(paymentInfo[m] || ''); setTempWeight(memberWeights[m] || 1); }} className={`p-1 rounded ${paymentInfo[m] ? 'text-blue-500' : 'text-[#a8a297]'}`}><Icon name="wallet" className="w-4 h-4" /></button>
                                         <button onClick={() => removeMember(m)} className="text-[#a8a297] hover:text-red-500"><Icon name="x" className="w-4 h-4" /></button>
                                     </div>
                                 ))}
@@ -399,11 +414,41 @@
                                 </div>
                             </div>
                             <div className="space-y-2">
-                                <label className="text-xs text-[#a8a297] uppercase">誰要分攤</label>
-                                <div className="flex flex-wrap gap-2">
-                                    {members.map(m => <button key={m} onClick={() => setForm(prev => ({...prev, participants: prev.participants.includes(m) ? prev.participants.filter(p => p !== m) : [...prev.participants, m]}))} className={`px-4 py-2 rounded-xl border text-sm ${form.participants.includes(m) ? 'bg-[#f3f0e9] border-[#5c6b53] text-[#5c6b53]' : 'bg-white border-[#e5e1d8]'}`}>{m}</button>)}
-                                    <button onClick={() => setForm({...form, participants: [...members]})} className="text-sm text-[#5c6b53] border-b border-[#5c6b53]">全選</button>
+                                <label className="text-xs text-[#a8a297] uppercase">誰要分攤 (可調整比例)</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {members.map(m => {
+                                        const isActive = form.participants.includes(m);
+                                        return (
+                                            <div key={m} className={`flex items-center border rounded-xl overflow-hidden transition-all ${isActive ? 'border-[#5c6b53] bg-[#f3f0e9]' : 'border-[#e5e1d8] bg-white'}`}>
+                                                <button 
+                                                    onClick={() => {
+                                                        const newParts = isActive ? form.participants.filter(p => p !== m) : [...form.participants, m];
+                                                        const newWeights = { ...form.customWeights };
+                                                        if (!isActive) newWeights[m] = memberWeights[m] || 1;
+                                                        setForm({ ...form, participants: newParts, customWeights: newWeights });
+                                                    }}
+                                                    className={`flex-1 px-3 py-2 text-sm text-left ${isActive ? 'text-[#5c6b53]' : 'text-[#a8a297]'}`}
+                                                >
+                                                    {m}
+                                                </button>
+                                                {isActive && (
+                                                    <input 
+                                                        type="number" 
+                                                        value={form.customWeights[m] || ''} 
+                                                        onChange={e => setForm({ ...form, customWeights: { ...form.customWeights, [m]: e.target.value } })}
+                                                        className="w-12 py-2 text-center text-xs bg-white border-l border-[#5c6b53]/20"
+                                                        placeholder="比"
+                                                    />
+                                                )}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
+                                <button onClick={() => {
+                                    const allWeights = {};
+                                    members.forEach(m => allWeights[m] = memberWeights[m] || 1);
+                                    setForm({...form, participants: [...members], customWeights: allWeights});
+                                }} className="text-sm text-[#5c6b53] border-b border-[#5c6b53] mt-2">全選</button>
                             </div>
                             <button onClick={submitExpense} disabled={!form.item || !form.amount || !form.payer || form.participants.length === 0} className="w-full bg-[#5c6b53] text-white py-3 rounded-2xl font-black disabled:opacity-30 active:bg-[#4a5742]">紀錄並同步</button>
                         </section>
@@ -437,7 +482,7 @@
                                                     </div>
                                                     <div className="flex items-center gap-3 ml-2 flex-shrink-0">
                                                         <div className="text-[10px] text-[#a8a297] font-bold">匯率：{exp.rate}</div>
-                                                        <button onClick={() => setEditTargetExpense({ ...exp, participants: Object.keys(exp.splits) })} className="text-[#e5e1d8] hover:text-[#5c6b53]"><Icon name="edit-3" className="w-5 h-5" /></button>
+                                                        <button onClick={() => setEditTargetExpense({ ...exp, participants: Object.keys(exp.splits), customWeights: exp.customWeights || {} })} className="text-[#e5e1d8] hover:text-[#5c6b53]"><Icon name="edit-3" className="w-5 h-5" /></button>
                                                         <button onClick={() => setDeleteTargetId(exp.id)} className="text-[#e5e1d8] hover:text-red-500"><Icon name="trash-2" className="w-5 h-5" /></button>
                                                     </div>
                                                 </div>
@@ -451,7 +496,7 @@
                                                 <div className="space-y-2 mt-4">
                                                     {Object.entries(exp.splits).map(([name, amt]) => (
                                                         <div key={name} className="bg-[#fdfaf5] px-4 py-2.5 rounded-[1.2rem] border border-[#e5e1d8]/80 flex items-center justify-between">
-                                                            <div className="text-[#7a746a] font-black text-base">{name}</div>
+                                                            <div className="text-[#7a746a] font-black text-base">{name} <span className="text-[10px] opacity-50">(比:{exp.customWeights?.[name] || 1})</span></div>
                                                             <div className="text-right">
                                                                 <div className="text-[#5c6b53] font-black text-lg">{exp.currency} {formatNum(amt)}</div>
                                                                 {exp.currency !== 'TWD' && <div className="text-xs text-[#a8a297] font-black mt-0.5">≈ TWD {formatNum(amt * exp.rate)}</div>}
@@ -549,9 +594,34 @@
                                         </div>
                                     </div>
                                     <div>
-                                        <label className="text-xs text-[#a8a297] uppercase mb-1 block">分攤者</label>
-                                        <div className="flex flex-wrap gap-2">
-                                            {members.map(m => <button key={m} onClick={() => setEditTargetExpense(prev => ({...prev, participants: prev.participants.includes(m) ? prev.participants.filter(p => p !== m) : [...prev.participants, m]}))} className={`px-3 py-1.5 rounded-lg border text-xs ${editTargetExpense.participants.includes(m) ? 'bg-[#f3f0e9] border-[#5c6b53] text-[#5c6b53]' : 'bg-white border-[#e5e1d8]'}`}>{m}</button>)}
+                                        <label className="text-xs text-[#a8a297] uppercase mb-1 block">分攤者與比例</label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {members.map(m => {
+                                                const isActive = editTargetExpense.participants.includes(m);
+                                                return (
+                                                    <div key={m} className={`flex items-center border rounded-xl overflow-hidden ${isActive ? 'border-[#5c6b53] bg-[#f3f0e9]' : 'border-[#e5e1d8]'}`}>
+                                                        <button 
+                                                            onClick={() => {
+                                                                const newParts = isActive ? editTargetExpense.participants.filter(p => p !== m) : [...editTargetExpense.participants, m];
+                                                                const newWeights = { ...editTargetExpense.customWeights };
+                                                                if (!isActive && !newWeights[m]) newWeights[m] = memberWeights[m] || 1;
+                                                                setEditTargetExpense({ ...editTargetExpense, participants: newParts, customWeights: newWeights });
+                                                            }}
+                                                            className={`flex-1 px-3 py-2 text-xs text-left ${isActive ? 'text-[#5c6b53]' : 'text-[#a8a297]'}`}
+                                                        >
+                                                            {m}
+                                                        </button>
+                                                        {isActive && (
+                                                            <input 
+                                                                type="number" 
+                                                                value={editTargetExpense.customWeights?.[m] || ''} 
+                                                                onChange={e => setEditTargetExpense({ ...editTargetExpense, customWeights: { ...editTargetExpense.customWeights, [m]: e.target.value } })}
+                                                                className="w-10 py-2 text-center text-xs bg-white border-l border-[#5c6b53]/20"
+                                                            />
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     </div>
                                 </div>
@@ -565,11 +635,27 @@
 
                     {editingPayment && (
                         <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-6">
-                            <div className="bg-white rounded-[2rem] p-6 max-w-sm w-full shadow-2xl scale-up-center">
-                                <h3 className="text-lg font-black text-[#5c6b53] mb-4">設定 {editingPayment} 的收款資訊</h3>
-                                <textarea value={tempPaymentText} onChange={e => setTempPaymentText(e.target.value)} placeholder="銀行代碼、帳號等..." className="w-full h-32 p-4 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl text-sm outline-none focus:border-[#5c6b53]" />
+                            <div className="bg-white rounded-[2rem] p-6 max-sm w-full shadow-2xl scale-up-center">
+                                <h3 className="text-lg font-black text-[#5c6b53] mb-4">設定 {editingPayment} 的夥伴資訊</h3>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="text-xs text-[#a8a297] uppercase mb-1 block">預設分攤比例 (權重)</label>
+                                        <input type="number" value={tempWeight} onChange={e => setTempWeight(e.target.value)} className="w-full px-4 py-2 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl text-center" />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-[#a8a297] uppercase mb-1 block">收款資訊 (銀行/帳號)</label>
+                                        <textarea value={tempPaymentText} onChange={e => setTempPaymentText(e.target.value)} placeholder="銀行代碼、帳號等..." className="w-full h-24 p-4 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl text-sm outline-none" />
+                                    </div>
+                                </div>
                                 <div className="flex gap-3 mt-6">
-                                    <button onClick={() => { updateCloud({ paymentInfo: { ...paymentInfo, [editingPayment]: tempPaymentText } }); setEditingPayment(null); showToast("已儲存"); }} className="flex-1 py-3 bg-[#5c6b53] text-white rounded-xl">儲存</button>
+                                    <button onClick={() => { 
+                                        updateCloud({ 
+                                            paymentInfo: { ...paymentInfo, [editingPayment]: tempPaymentText },
+                                            memberWeights: { ...memberWeights, [editingPayment]: parseFloat(tempWeight) || 1 }
+                                        }); 
+                                        setEditingPayment(null); 
+                                        showToast("已儲存夥伴設定"); 
+                                    }} className="flex-1 py-3 bg-[#5c6b53] text-white rounded-xl">儲存</button>
                                     <button onClick={() => setEditingPayment(null)} className="flex-1 py-3 bg-[#f3f0e9] text-[#a8a297] rounded-xl">取消</button>
                                 </div>
                             </div>
@@ -590,7 +676,7 @@
                         <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-6">
                             <div className="bg-white rounded-[2rem] p-8 max-w-sm w-full text-center">
                                 <h3 className="text-xl font-black text-red-500 mb-4">全部清除？</h3>
-                                <button onClick={() => { updateCloud({ members: [], expenses: [], paymentInfo: {} }); setShowClearConfirm(false); showToast("已清除"); }} className="w-full py-4 bg-red-500 text-white rounded-2xl mb-2">確認清除</button>
+                                <button onClick={() => { updateCloud({ members: [], expenses: [], paymentInfo: {}, memberWeights: {} }); setShowClearConfirm(false); showToast("已清除"); }} className="w-full py-4 bg-red-500 text-white rounded-2xl mb-2">確認清除</button>
                                 <button onClick={() => setShowClearConfirm(false)} className="w-full py-3 text-[#a8a297]">取消</button>
                             </div>
                         </div>
