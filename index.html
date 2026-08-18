@@ -117,33 +117,37 @@
         ];
 
         const AuthScreen = () => {
-            const [email, setEmail] = useState('');
-            const [password, setPassword] = useState('');
-            const [isRegister, setIsRegister] = useState(false);
             const [error, setError] = useState('');
             const [busy, setBusy] = useState(false);
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); });
-            const submit = async () => {
-                if (!email.trim() || password.length < 6) return setError('請輸入 Email，密碼至少 6 碼');
+            const signInWithGoogle = async () => {
                 setBusy(true); setError('');
                 try {
-                    if (isRegister) await auth.createUserWithEmailAndPassword(email.trim(), password);
-                    else await auth.signInWithEmailAndPassword(email.trim(), password);
+                    const provider = new firebase.auth.GoogleAuthProvider();
+                    provider.setCustomParameters({ prompt: 'select_account' });
+                    await auth.signInWithPopup(provider);
                 } catch (e) {
-                    const messages = { 'auth/email-already-in-use': '這個 Email 已註冊', 'auth/invalid-credential': 'Email 或密碼錯誤', 'auth/user-not-found': '找不到此帳號', 'auth/wrong-password': 'Email 或密碼錯誤', 'auth/invalid-email': 'Email 格式不正確', 'auth/operation-not-allowed': '請先在 Firebase Console 啟用 Email/密碼登入' };
-                    setError(messages[e.code] || e.message || '登入失敗');
+                    const messages = {
+                        'auth/popup-closed-by-user': '登入視窗已關閉，請再試一次',
+                        'auth/cancelled-popup-request': '登入程序已取消，請再試一次',
+                        'auth/popup-blocked': '瀏覽器封鎖了登入視窗，請允許彈出式視窗後再試',
+                        'auth/operation-not-allowed': '請先在 Firebase Console 啟用 Google 登入',
+                        'auth/unauthorized-domain': '目前網域尚未加入 Firebase 授權網域'
+                    };
+                    setError(messages[e.code] || e.message || 'Google 登入失敗');
                 } finally { setBusy(false); }
             };
             return (
                 <div className="min-h-screen flex items-center justify-center p-6 bg-[#f9f7f2]">
                     <div className="bg-white p-7 rounded-[2rem] shadow-xl max-w-sm w-full border border-[#e5e1d8] space-y-4 text-center">
                         <div className="bg-[#5c6b53]/10 w-16 h-16 rounded-full flex items-center justify-center mx-auto text-[#5c6b53]"><Icon name="user-round-check" className="w-8 h-8" /></div>
-                        <h1 className="text-xl font-black text-[#5c6b53]">{isRegister ? '建立 TravelLedger 帳號' : '登入 TravelLedger'}</h1>
-                        <input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" className="w-full px-4 py-3 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl" />
-                        <input type="password" autoComplete={isRegister ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} placeholder="密碼（至少 6 碼）" className="w-full px-4 py-3 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl" />
+                        <h1 className="text-xl font-black text-[#5c6b53]">登入 TravelLedger</h1>
+                        <p className="text-sm text-[#a8a297]">登入後即可選擇你設定過的旅遊專案</p>
                         {error && <p className="text-sm text-red-500 bg-red-50 p-3 rounded-xl">{error}</p>}
-                        <button onClick={submit} disabled={busy} className="w-full bg-[#5c6b53] text-white py-3 rounded-xl text-lg shadow-lg disabled:opacity-50">{busy ? '處理中…' : (isRegister ? '註冊並登入' : '登入')}</button>
-                        <button onClick={() => { setIsRegister(!isRegister); setError(''); }} className="text-sm text-[#5c6b53] underline">{isRegister ? '已有帳號？回登入' : '第一次使用？建立帳號'}</button>
+                        <button onClick={signInWithGoogle} disabled={busy} className="w-full bg-white text-[#4a4a4a] py-3 px-4 rounded-xl text-base shadow-md border border-[#d8d3c9] disabled:opacity-50 flex items-center justify-center gap-3 active:scale-95 transition-all">
+                            <span className="w-6 h-6 rounded-full bg-white border flex items-center justify-center text-[#4285F4] font-black">G</span>
+                            {busy ? '正在連接 Google…' : '使用 Google 帳號登入'}
+                        </button>
                     </div>
                 </div>
             );
