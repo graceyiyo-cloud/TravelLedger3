@@ -35,6 +35,7 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-analytics-compat.js"></script>
 
@@ -96,6 +97,7 @@
             } catch (e) { console.error("Firebase 初始化失敗", e); }
         }
         const db = firebase.firestore();
+        const auth = firebase.auth();
 
         const { useState, useEffect, useMemo } = React;
         const Icon = ({ name, className = "w-5 h-5" }) => <i data-lucide={name} className={className}></i>;
@@ -114,55 +116,106 @@
             { code: 'THB', name: '泰銖', symbol: 'THB' },
         ];
 
-        const LoginScreen = ({ onJoin }) => {
-            const [tripId, setTripId] = useState('');
-            const [history, setHistory] = useState([]);
-            useEffect(() => {
-                const stored = localStorage.getItem('trip_history');
-                if (stored) setHistory(JSON.parse(stored));
-            }, []);
+        const AuthScreen = () => {
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [isRegister, setIsRegister] = useState(false);
+            const [error, setError] = useState('');
+            const [busy, setBusy] = useState(false);
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); });
-            const handleJoin = (idToJoin) => {
+            const submit = async () => {
+                if (!email.trim() || password.length < 6) return setError('請輸入 Email，密碼至少 6 碼');
+                setBusy(true); setError('');
+                try {
+                    if (isRegister) await auth.createUserWithEmailAndPassword(email.trim(), password);
+                    else await auth.signInWithEmailAndPassword(email.trim(), password);
+                } catch (e) {
+                    const messages = { 'auth/email-already-in-use': '這個 Email 已註冊', 'auth/invalid-credential': 'Email 或密碼錯誤', 'auth/user-not-found': '找不到此帳號', 'auth/wrong-password': 'Email 或密碼錯誤', 'auth/invalid-email': 'Email 格式不正確', 'auth/operation-not-allowed': '請先在 Firebase Console 啟用 Email/密碼登入' };
+                    setError(messages[e.code] || e.message || '登入失敗');
+                } finally { setBusy(false); }
+            };
+            return (
+                <div className="min-h-screen flex items-center justify-center p-6 bg-[#f9f7f2]">
+                    <div className="bg-white p-7 rounded-[2rem] shadow-xl max-w-sm w-full border border-[#e5e1d8] space-y-4 text-center">
+                        <div className="bg-[#5c6b53]/10 w-16 h-16 rounded-full flex items-center justify-center mx-auto text-[#5c6b53]"><Icon name="user-round-check" className="w-8 h-8" /></div>
+                        <h1 className="text-xl font-black text-[#5c6b53]">{isRegister ? '建立 TravelLedger 帳號' : '登入 TravelLedger'}</h1>
+                        <input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" className="w-full px-4 py-3 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl" />
+                        <input type="password" autoComplete={isRegister ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} placeholder="密碼（至少 6 碼）" className="w-full px-4 py-3 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl" />
+                        {error && <p className="text-sm text-red-500 bg-red-50 p-3 rounded-xl">{error}</p>}
+                        <button onClick={submit} disabled={busy} className="w-full bg-[#5c6b53] text-white py-3 rounded-xl text-lg shadow-lg disabled:opacity-50">{busy ? '處理中…' : (isRegister ? '註冊並登入' : '登入')}</button>
+                        <button onClick={() => { setIsRegister(!isRegister); setError(''); }} className="text-sm text-[#5c6b53] underline">{isRegister ? '已有帳號？回登入' : '第一次使用？建立帳號'}</button>
+                    </div>
+                </div>
+            );
+        };
+
+        const ProjectScreen = ({ user, onJoin }) => {
+            const [tripId, setTripId] = useState('');
+            const [projectName, setProjectName] = useState('');
+            const [projects, setProjects] = useState([]);
+            const [loading, setLoading] = useState(true);
+            useEffect(() => {
+                const ref = db.collection('users').doc(user.uid);
+                return ref.onSnapshot(doc => {
+                    const cloudProjects = doc.exists ? (doc.data().projects || []) : [];
+                    const history = JSON.parse(localStorage.getItem('trip_history') || '[]');
+                    const merged = [...cloudProjects];
+                    history.forEach(id => { if (!merged.some(p => p.id === id)) merged.push({ id, name: id }); });
+                    setProjects(merged); setLoading(false);
+                }, () => setLoading(false));
+            }, [user.uid]);
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); });
+            const handleJoin = async (idToJoin, nameToJoin) => {
                 const targetId = idToJoin || tripId;
                 if (!targetId) return;
-                const newHistory = [targetId, ...history.filter(h => h !== targetId)].slice(0, 5);
-                setHistory(newHistory);
-                localStorage.setItem('trip_history', JSON.stringify(newHistory));
-                onJoin(targetId);
+                const cleanId = targetId.trim();
+                const entry = { id: cleanId, name: (nameToJoin || projectName || cleanId).trim() };
+                const next = [entry, ...projects.filter(p => p.id !== cleanId)];
+                await db.collection('users').doc(user.uid).set({ email: user.email, projects: next }, { merge: true });
+                localStorage.setItem('trip_history', JSON.stringify(next.map(p => p.id).slice(0, 20)));
+                onJoin(cleanId);
             };
-            const removeHistoryItem = (e, idToRemove) => {
+            const removeProject = async (e, idToRemove) => {
                 e.stopPropagation();
-                const newHistory = history.filter(h => h !== idToRemove);
-                setHistory(newHistory);
-                localStorage.setItem('trip_history', JSON.stringify(newHistory));
+                const next = projects.filter(p => p.id !== idToRemove);
+                localStorage.setItem('trip_history', JSON.stringify(next.map(p => p.id)));
+                await db.collection('users').doc(user.uid).set({ projects: next }, { merge: true });
             };
             return (
                 <div className="min-h-screen flex items-center justify-center p-6 bg-[#f9f7f2]">
                     <div className="bg-white p-6 rounded-[2rem] shadow-xl max-w-sm w-full border border-[#e5e1d8] space-y-4 text-center">
                         <div className="bg-[#5c6b53]/10 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2 text-[#5c6b53]"><Icon name="cloud" className="w-8 h-8" /></div>
-                        <h1 className="text-xl font-black text-[#5c6b53]">輸入旅遊群組代碼</h1>
-                        <input type="text" value={tripId} onChange={e => setTripId(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleJoin()} placeholder="例如：Tokyo2026" className="w-full px-4 py-3 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl text-center text-lg font-black uppercase tracking-widest placeholder:normal-case" />
-                        <button onClick={() => handleJoin()} className="w-full bg-[#5c6b53] text-white py-3 rounded-xl text-lg shadow-lg font-black active:scale-95 transition-all">進入記帳</button>
-                        {history.length > 0 && (
+                        <h1 className="text-xl font-black text-[#5c6b53]">選擇專案</h1>
+                        <p className="text-xs text-[#a8a297]">{user.email}</p>
+                        {!loading && projects.length > 0 && (
                             <div className="pt-4 border-t border-[#e5e1d8]/50 mt-2">
-                                <p className="text-xs text-[#a8a297] mb-3 font-bold">歷史紀錄</p>
-                                <div className="flex flex-wrap gap-2 justify-center">
-                                    {history.map(h => (
-                                        <div key={h} className="inline-flex items-center bg-[#f3f0e9] rounded-lg border border-[#e5e1d8] overflow-hidden">
-                                            <span onClick={() => handleJoin(h)} className="px-3 py-2 text-[#5c6b53] text-xs font-black cursor-pointer hover:bg-[#e5e1d8] border-r border-[#e5e1d8]/60">{h}</span>
-                                            <button onClick={(e) => removeHistoryItem(e, h)} className="px-2 py-2 text-[#a8a297] hover:text-red-500"><Icon name="trash-2" className="w-3 h-3" /></button>
+                                <p className="text-xs text-[#a8a297] mb-3 font-bold">已設定的專案</p>
+                                <div className="space-y-2">
+                                    {projects.map(p => (
+                                        <div key={p.id} className="flex items-center bg-[#f3f0e9] rounded-xl border border-[#e5e1d8] overflow-hidden text-left">
+                                            <button onClick={() => handleJoin(p.id, p.name)} className="flex-1 px-4 py-3 text-[#5c6b53]"><span className="block font-black">{p.name}</span><span className="block text-[10px] opacity-60">{p.id}</span></button>
+                                            <button onClick={(e) => removeProject(e, p.id)} className="px-3 py-4 text-[#a8a297] hover:text-red-500"><Icon name="trash-2" className="w-4 h-4" /></button>
                                         </div>
                                     ))}
                                 </div>
                             </div>
                         )}
+                        <div className="pt-4 border-t border-[#e5e1d8] space-y-2">
+                            <p className="text-xs text-[#a8a297]">建立或加入專案</p>
+                            <input type="text" value={projectName} onChange={e => setProjectName(e.target.value)} placeholder="專案名稱，例如：東京旅行" className="w-full px-4 py-3 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl" />
+                            <input type="text" value={tripId} onChange={e => setTripId(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleJoin()} placeholder="專案代碼，例如：Tokyo2026" className="w-full px-4 py-3 bg-[#fdfaf5] border border-[#e5e1d8] rounded-xl" />
+                            <button onClick={() => handleJoin()} className="w-full bg-[#5c6b53] text-white py-3 rounded-xl shadow-lg">儲存並進入專案</button>
+                        </div>
+                        <button onClick={() => auth.signOut()} className="text-sm text-[#a8a297]">登出帳號</button>
                     </div>
                 </div>
             );
         };
 
         function App() {
-            const [tripId, setTripId] = useState(localStorage.getItem('my_trip_id') || null);
+            const [authUser, setAuthUser] = useState(null);
+            const [authLoading, setAuthLoading] = useState(true);
+            const [tripId, setTripId] = useState(null);
             const [loading, setLoading] = useState(false);
             const [members, setMembers] = useState([]);
             const [paymentInfo, setPaymentInfo] = useState({});
@@ -179,7 +232,13 @@
             const [editTargetExpense, setEditTargetExpense] = useState(null);
             const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
             const [toast, setToast] = useState(null);
-            const [form, setForm] = useState({ item: '', amount: '', currency: 'TWD', payer: '', participants: [], customWeights: {} });
+            const [form, setForm] = useState({ item: '', amount: '', currency: 'TWD', payer: '', participants: [], splitMode: 'weight', customWeights: {}, customAmounts: {} });
+
+            useEffect(() => auth.onAuthStateChanged(user => {
+                setAuthUser(user);
+                if (!user) setTripId(null);
+                setAuthLoading(false);
+            }), []);
 
             useEffect(() => {
                 if (!tripId) return;
@@ -261,26 +320,44 @@
                 return splits;
             };
 
+            const calculateSplits = (amount, participants, splitMode, customWeights, customAmounts) => {
+                if (splitMode === 'amount') {
+                    const splits = {};
+                    participants.forEach(name => splits[name] = parseFloat(customAmounts[name]) || 0);
+                    return splits;
+                }
+                return calculateSplitsByWeights(amount, participants, customWeights);
+            };
+
+            const amountSplitError = (data) => {
+                if (data.splitMode !== 'amount') return '';
+                const assigned = data.participants.reduce((sum, name) => sum + (parseFloat(data.customAmounts?.[name]) || 0), 0);
+                const difference = (parseFloat(data.amount) || 0) - assigned;
+                return Math.abs(difference) < 0.01 ? '' : `尚差 ${difference > 0 ? '' : '超過 '}${formatNum(Math.abs(difference))} ${data.currency}`;
+            };
+
             const submitExpense = () => {
-                const { item, amount, currency, payer, participants, customWeights } = form;
+                const { item, amount, currency, payer, participants, splitMode, customWeights, customAmounts } = form;
                 if (!item || !amount || !payer || participants.length === 0) return;
-                
-                const splits = calculateSplitsByWeights(amount, participants, customWeights);
+                if (amountSplitError(form)) return showToast('自訂分攤金額加總必須等於支出金額');
+
+                const splits = calculateSplits(amount, participants, splitMode, customWeights, customAmounts);
                 const newExpense = {
                     id: Date.now(), item, amount: parseFloat(amount), currency, rate: parseFloat(rates[currency] || 1),
-                    payer, splits, customWeights, timestamp: new Date().toLocaleString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(/\//g, '/')
+                    payer, splits, splitMode, customWeights, customAmounts, timestamp: new Date().toLocaleString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(/\//g, '/')
                 };
                 updateCloud({ expenses: [...expenses, newExpense] });
-                setForm({ ...form, item: '', amount: '', participants: [], customWeights: {} });
+                setForm({ ...form, item: '', amount: '', participants: [], customWeights: {}, customAmounts: {} });
                 showToast("支出已儲存");
             };
 
             const updateExpense = () => {
                 if (!editTargetExpense) return;
-                const { id, item, amount, currency, payer, participants, customWeights } = editTargetExpense;
+                const { id, item, amount, currency, payer, participants, splitMode, customWeights, customAmounts } = editTargetExpense;
                 if (!item || !amount || !payer || participants.length === 0) return;
+                if (amountSplitError(editTargetExpense)) return showToast('自訂分攤金額加總必須等於支出金額');
 
-                const splits = calculateSplitsByWeights(amount, participants, customWeights);
+                const splits = calculateSplits(amount, participants, splitMode, customWeights, customAmounts);
                 const updatedExpenses = expenses.map(exp => {
                     if (exp.id === id) {
                         return { 
@@ -288,9 +365,11 @@
                             item, 
                             amount: parseFloat(amount), 
                             currency, 
-                            payer, 
-                            splits, 
+                            payer,
+                            splits,
+                            splitMode,
                             customWeights,
+                            customAmounts,
                             rate: parseFloat(rates[currency] || exp.rate) 
                         };
                     }
@@ -385,7 +464,9 @@
                 showToast("已複製結算清單");
             };
 
-            if (!tripId) return <LoginScreen onJoin={setTripId} />;
+            if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-[#f9f7f2]"><div className="loader"></div></div>;
+            if (!authUser) return <AuthScreen />;
+            if (!tripId) return <ProjectScreen user={authUser} onJoin={setTripId} />;
             if (loading && members.length === 0) return <div className="min-h-screen flex items-center justify-center bg-[#f9f7f2] flex-col gap-4"><div className="loader"></div><p className="text-[#5c6b53] text-xs">Syncing...</p></div>;
 
             return (
@@ -444,7 +525,12 @@
                                 </div>
                             </div>
                             <div className="space-y-2">
-                                <label className="text-xs text-[#a8a297] uppercase">誰要分攤 (可調整比例)</label>
+                                <label className="text-xs text-[#a8a297] uppercase">分攤方式</label>
+                                <div className="grid grid-cols-2 gap-2 bg-[#f3f0e9] p-1 rounded-xl">
+                                    <button onClick={() => setForm({...form, splitMode: 'weight'})} className={`py-2 rounded-lg text-sm ${form.splitMode === 'weight' ? 'bg-white text-[#5c6b53] shadow' : 'text-[#a8a297]'}`}>按比例分攤</button>
+                                    <button onClick={() => setForm({...form, splitMode: 'amount'})} className={`py-2 rounded-lg text-sm ${form.splitMode === 'amount' ? 'bg-white text-[#5c6b53] shadow' : 'text-[#a8a297]'}`}>自訂各自金額</button>
+                                </div>
+                                <label className="text-xs text-[#a8a297] uppercase">誰要分攤（{form.splitMode === 'amount' ? '填寫各自金額' : '可調整比例'}）</label>
                                 <div className="grid grid-cols-2 gap-2">
                                     {members.map(m => {
                                         const isActive = form.participants.includes(m);
@@ -453,21 +539,26 @@
                                                 <button 
                                                     onClick={() => {
                                                         const newParts = isActive ? form.participants.filter(p => p !== m) : [...form.participants, m];
-                                                        const newWeights = { ...form.customWeights };
-                                                        if (!isActive) newWeights[m] = memberWeights[m] || 1;
-                                                        setForm({ ...form, participants: newParts, customWeights: newWeights });
+                                                         const newWeights = { ...form.customWeights };
+                                                         const newAmounts = { ...form.customAmounts };
+                                                         if (!isActive) newWeights[m] = memberWeights[m] || 1;
+                                                         if (!isActive && newAmounts[m] === undefined) newAmounts[m] = '';
+                                                         setForm({ ...form, participants: newParts, customWeights: newWeights, customAmounts: newAmounts });
                                                     }}
                                                     className={`flex-1 px-3 py-2 text-sm text-left ${isActive ? 'text-[#5c6b53]' : 'text-[#a8a297]'}`}
                                                 >
                                                     {m}
                                                 </button>
                                                 {isActive && (
-                                                    <input 
-                                                        type="number" 
-                                                        value={form.customWeights[m] || ''} 
-                                                        onChange={e => setForm({ ...form, customWeights: { ...form.customWeights, [m]: e.target.value } })}
-                                                        className="w-12 py-2 text-center text-xs bg-white border-l border-[#5c6b53]/20"
-                                                        placeholder="比"
+                                                    <input
+                                                         type="number"
+                                                         min="0" step="any"
+                                                         value={form.splitMode === 'amount' ? (form.customAmounts[m] ?? '') : (form.customWeights[m] || '')}
+                                                         onChange={e => form.splitMode === 'amount'
+                                                             ? setForm({ ...form, customAmounts: { ...form.customAmounts, [m]: e.target.value } })
+                                                             : setForm({ ...form, customWeights: { ...form.customWeights, [m]: e.target.value } })}
+                                                         className="w-20 py-2 text-center text-xs bg-white border-l border-[#5c6b53]/20"
+                                                         placeholder={form.splitMode === 'amount' ? '金額' : '比例'}
                                                     />
                                                 )}
                                             </div>
@@ -475,10 +566,13 @@
                                     })}
                                 </div>
                                 <button onClick={() => {
-                                    const allWeights = {};
-                                    members.forEach(m => allWeights[m] = memberWeights[m] || 1);
-                                    setForm({...form, participants: [...members], customWeights: allWeights});
-                                }} className="text-sm text-[#5c6b53] border-b border-[#5c6b53] mt-2">全選</button>
+                                     const allWeights = {};
+                                     const allAmounts = { ...form.customAmounts };
+                                     members.forEach(m => allWeights[m] = memberWeights[m] || 1);
+                                     members.forEach(m => { if (allAmounts[m] === undefined) allAmounts[m] = ''; });
+                                     setForm({...form, participants: [...members], customWeights: allWeights, customAmounts: allAmounts});
+                                 }} className="text-sm text-[#5c6b53] border-b border-[#5c6b53] mt-2">全選</button>
+                                {amountSplitError(form) && <p className="text-sm text-orange-600 bg-orange-50 p-2 rounded-lg">{amountSplitError(form)}</p>}
                             </div>
                             <button onClick={submitExpense} disabled={!form.item || !form.amount || !form.payer || form.participants.length === 0} className="w-full bg-[#5c6b53] text-white py-3 rounded-2xl font-black disabled:opacity-30 active:bg-[#4a5742]">紀錄並同步</button>
                         </section>
@@ -512,7 +606,7 @@
                                                     </div>
                                                     <div className="flex items-center gap-3 ml-2 flex-shrink-0">
                                                         <div className="text-[10px] text-[#a8a297] font-bold">匯率：{exp.rate}</div>
-                                                        <button onClick={() => setEditTargetExpense({ ...exp, participants: Object.keys(exp.splits), customWeights: exp.customWeights || {} })} className="text-[#e5e1d8] hover:text-[#5c6b53]"><Icon name="edit-3" className="w-5 h-5" /></button>
+                                                        <button onClick={() => setEditTargetExpense({ ...exp, participants: Object.keys(exp.splits), splitMode: exp.splitMode || 'weight', customWeights: exp.customWeights || {}, customAmounts: exp.customAmounts || exp.splits || {} })} className="text-[#e5e1d8] hover:text-[#5c6b53]"><Icon name="edit-3" className="w-5 h-5" /></button>
                                                         <button onClick={() => setDeleteTargetId(exp.id)} className="text-[#e5e1d8] hover:text-red-500"><Icon name="trash-2" className="w-5 h-5" /></button>
                                                     </div>
                                                 </div>
@@ -526,7 +620,7 @@
                                                 <div className="space-y-2 mt-4">
                                                     {Object.entries(exp.splits).map(([name, amt]) => (
                                                         <div key={name} className="bg-[#fdfaf5] px-4 py-2.5 rounded-[1.2rem] border border-[#e5e1d8]/80 flex items-center justify-between">
-                                                            <div className="text-[#7a746a] font-black text-base">{name} <span className="text-[10px] opacity-50">(比:{exp.customWeights?.[name] || 1})</span></div>
+                                                            <div className="text-[#7a746a] font-black text-base">{name} {exp.splitMode !== 'amount' && <span className="text-[10px] opacity-50">(比:{exp.customWeights?.[name] || 1})</span>}</div>
                                                             <div className="text-right">
                                                                 <div className="text-[#5c6b53] font-black text-lg">{exp.currency} {formatNum(amt)}</div>
                                                                 {exp.currency !== 'TWD' && <div className="text-xs text-[#a8a297] font-black mt-0.5">≈ TWD {formatNum(amt * exp.rate)}</div>}
@@ -624,7 +718,12 @@
                                         </div>
                                     </div>
                                     <div>
-                                        <label className="text-xs text-[#a8a297] uppercase mb-1 block">分攤者與比例</label>
+                                        <label className="text-xs text-[#a8a297] uppercase mb-1 block">分攤方式</label>
+                                        <div className="grid grid-cols-2 gap-2 bg-[#f3f0e9] p-1 rounded-xl mb-3">
+                                            <button onClick={() => setEditTargetExpense({...editTargetExpense, splitMode: 'weight'})} className={`py-2 rounded-lg text-xs ${editTargetExpense.splitMode === 'weight' ? 'bg-white text-[#5c6b53] shadow' : 'text-[#a8a297]'}`}>按比例</button>
+                                            <button onClick={() => setEditTargetExpense({...editTargetExpense, splitMode: 'amount'})} className={`py-2 rounded-lg text-xs ${editTargetExpense.splitMode === 'amount' ? 'bg-white text-[#5c6b53] shadow' : 'text-[#a8a297]'}`}>自訂金額</button>
+                                        </div>
+                                        <label className="text-xs text-[#a8a297] uppercase mb-1 block">分攤者與{editTargetExpense.splitMode === 'amount' ? '金額' : '比例'}</label>
                                         <div className="grid grid-cols-2 gap-2">
                                             {members.map(m => {
                                                 const isActive = editTargetExpense.participants.includes(m);
@@ -634,8 +733,10 @@
                                                             onClick={() => {
                                                                 const newParts = isActive ? editTargetExpense.participants.filter(p => p !== m) : [...editTargetExpense.participants, m];
                                                                 const newWeights = { ...editTargetExpense.customWeights };
+                                                                const newAmounts = { ...(editTargetExpense.customAmounts || {}) };
                                                                 if (!isActive && !newWeights[m]) newWeights[m] = memberWeights[m] || 1;
-                                                                setEditTargetExpense({ ...editTargetExpense, participants: newParts, customWeights: newWeights });
+                                                                if (!isActive && newAmounts[m] === undefined) newAmounts[m] = '';
+                                                                setEditTargetExpense({ ...editTargetExpense, participants: newParts, customWeights: newWeights, customAmounts: newAmounts });
                                                             }}
                                                             className={`flex-1 px-3 py-2 text-xs text-left ${isActive ? 'text-[#5c6b53]' : 'text-[#a8a297]'}`}
                                                         >
@@ -643,16 +744,21 @@
                                                         </button>
                                                         {isActive && (
                                                             <input 
-                                                                type="number" 
-                                                                value={editTargetExpense.customWeights?.[m] || ''} 
-                                                                onChange={e => setEditTargetExpense({ ...editTargetExpense, customWeights: { ...editTargetExpense.customWeights, [m]: e.target.value } })}
-                                                                className="w-10 py-2 text-center text-xs bg-white border-l border-[#5c6b53]/20"
+                                                                type="number"
+                                                                min="0" step="any"
+                                                                value={editTargetExpense.splitMode === 'amount' ? (editTargetExpense.customAmounts?.[m] ?? '') : (editTargetExpense.customWeights?.[m] || '')}
+                                                                onChange={e => editTargetExpense.splitMode === 'amount'
+                                                                    ? setEditTargetExpense({ ...editTargetExpense, customAmounts: { ...editTargetExpense.customAmounts, [m]: e.target.value } })
+                                                                    : setEditTargetExpense({ ...editTargetExpense, customWeights: { ...editTargetExpense.customWeights, [m]: e.target.value } })}
+                                                                className="w-16 py-2 text-center text-xs bg-white border-l border-[#5c6b53]/20"
+                                                                placeholder={editTargetExpense.splitMode === 'amount' ? '金額' : '比例'}
                                                             />
                                                         )}
                                                     </div>
                                                 );
                                             })}
                                         </div>
+                                        {amountSplitError(editTargetExpense) && <p className="text-sm text-orange-600 bg-orange-50 p-2 rounded-lg mt-2">{amountSplitError(editTargetExpense)}</p>}
                                     </div>
                                 </div>
                                 <div className="flex gap-3 mt-6">
@@ -696,8 +802,8 @@
                     {showLogoutConfirm && (
                         <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-6">
                             <div className="bg-white rounded-[2rem] p-8 max-w-sm w-full text-center">
-                                <h3 className="text-xl font-black text-[#5c6b53] mb-4">確定登出？</h3>
-                                <button onClick={() => { localStorage.removeItem('my_trip_id'); setTripId(null); setShowLogoutConfirm(false); }} className="w-full py-4 bg-[#5c6b53] text-white rounded-2xl mb-2">確認登出</button>
+                                <h3 className="text-xl font-black text-[#5c6b53] mb-4">切換專案？</h3>
+                                <button onClick={() => { localStorage.removeItem('my_trip_id'); setTripId(null); setShowLogoutConfirm(false); }} className="w-full py-4 bg-[#5c6b53] text-white rounded-2xl mb-2">回到專案列表</button>
                                 <button onClick={() => setShowLogoutConfirm(false)} className="w-full py-3 text-[#a8a297]">取消</button>
                             </div>
                         </div>
